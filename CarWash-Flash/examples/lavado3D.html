@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<title>Lavado 3D</title>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum=1.0">
+	<link type="text/css" rel="stylesheet" href="main.css">
+	<link rel="shortcut icon" type="image/x-icon" href="https://cdn-icons-png.flaticon.com/512/4787/4787511.png">
+	
+	<style>
+		body {
+			color: #bbbbbb;
+			background: #333333;
+		}
+
+		a {
+			color: #08f;
+		}
+
+		.colorPicker {
+			display: inline-block;
+			margin: 0 10px;
+		}
+
+		.effectControl {
+			display: inline-block;
+			margin: 0 10px;
+		}
+
+		input[type="color"],
+		button {
+			background-color: #444;
+			/* Fondo oscuro pero más notable */
+			color: #fff;
+			/* Color del texto */
+			font-family: Arial, sans-serif;
+			/* Fuente */
+			border: none;
+			padding: 10px 15px;
+			/* Espaciado */
+			border-radius: 5px;
+			cursor: pointer;
+			outline: none;
+			margin: 5px;
+			/* Espaciado entre elementos */
+		}
+
+		input[type="color"] {
+			width: 60px;
+			/* Ancho del input de color */
+			height: 40px;
+			/* Alto del input de color para igualar el botón */
+			vertical-align: middle;
+			/* Alineación vertical */
+		}
+
+		button {
+			vertical-align: middle;
+			/* Alineación vertical */
+		}
+
+		button:hover {
+			background-color: #666;
+			/* Color de fondo al pasar el mouse */
+		}
+	</style>
+</head>
+
+<body>
+	<div id="info">
+		<span class="colorPicker"><input id="body-color" type="color" value="#ff0000"><br />Pintura</span>
+		<span class="colorPicker"><input id="details-color" type="color" value="#ffffff"><br />Detalles</span>
+		<span class="colorPicker"><input id="glass-color" type="color" value="#ffffff"><br />Vidrio</span>
+		<span class="effectControl"><button id="foam-button">Espuma</button></span>
+		<span class="effectControl"><button id="wax-button">Encerado</button></span>
+	</div>
+
+	<div id="container"></div>
+
+	<script type="importmap">
+		{
+			"imports": {
+				"three": "../build/three.module.js",
+				"three/addons/": "./jsm/"
+			}
+		}
+	</script>
+
+	<script type="module">
+
+		import * as THREE from 'three';
+
+		import Stats from 'three/addons/libs/stats.module.js';
+
+		import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+		import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+		import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+		import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+
+		let camera, scene, renderer;
+		let stats;
+
+		let grid;
+		let controls;
+
+		const wheels = [];
+		let foamEffect, waxEffect;
+
+		function init() {
+
+			const container = document.getElementById('container');
+
+			renderer = new THREE.WebGLRenderer({ antialias: true });
+			renderer.setPixelRatio(window.devicePixelRatio);
+			renderer.setSize(window.innerWidth, window.innerHeight);
+			renderer.setAnimationLoop(render);
+			renderer.toneMapping = THREE.ACESFilmicToneMapping;
+			renderer.toneMappingExposure = 0.85;
+			container.appendChild(renderer.domElement);
+
+			window.addEventListener('resize', onWindowResize);
+
+			stats = new Stats();
+			container.appendChild(stats.dom);
+
+			//
+
+			camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 100);
+			camera.position.set(4.25, 1.4, -4.5);
+
+			controls = new OrbitControls(camera, container);
+			controls.maxDistance = 9;
+			controls.maxPolarAngle = THREE.MathUtils.degToRad(90);
+			controls.target.set(0, 0.5, 0);
+			controls.update();
+
+			scene = new THREE.Scene();
+			scene.background = new THREE.Color(0x333333);
+			scene.environment = new RGBELoader().load('textures/equirectangular/venice_sunset_1k.hdr');
+			scene.environment.mapping = THREE.EquirectangularReflectionMapping;
+			scene.fog = new THREE.Fog(0x333333, 10, 15);
+
+			grid = new THREE.GridHelper(20, 40, 0xffffff, 0xffffff);
+			grid.material.opacity = 0.2;
+			grid.material.depthWrite = false;
+			grid.material.transparent = true;
+			scene.add(grid);
+
+			// materials
+
+			const bodyMaterial = new THREE.MeshPhysicalMaterial({
+				color: 0xff0000, metalness: 1.0, roughness: 0.5, clearcoat: 1.0, clearcoatRoughness: 0.03
+			});
+
+			const detailsMaterial = new THREE.MeshStandardMaterial({
+				color: 0xffffff, metalness: 1.0, roughness: 0.5
+			});
+
+			const glassMaterial = new THREE.MeshPhysicalMaterial({
+				color: 0xffffff, metalness: 0.25, roughness: 0, transmission: 1.0
+			});
+
+			const bodyColorInput = document.getElementById('body-color');
+			bodyColorInput.addEventListener('input', function () {
+				bodyMaterial.color.set(this.value);
+				if (waxEffect.isActive) waxEffect.updateShinyMaterial('body', this.value);
+			});
+
+			const detailsColorInput = document.getElementById('details-color');
+			detailsColorInput.addEventListener('input', function () {
+				detailsMaterial.color.set(this.value);
+				if (waxEffect.isActive) waxEffect.updateShinyMaterial('details', this.value);
+			});
+
+			const glassColorInput = document.getElementById('glass-color');
+			glassColorInput.addEventListener('input', function () {
+				glassMaterial.color.set(this.value);
+				if (waxEffect.isActive) waxEffect.updateShinyMaterial('glass', this.value);
+			});
+
+			// Car
+
+			const shadow = new THREE.TextureLoader().load('models/gltf/ferrari_ao.png');
+
+			const dracoLoader = new DRACOLoader();
+			dracoLoader.setDecoderPath('jsm/libs/draco/gltf/');
+
+			const loader = new GLTFLoader();
+			loader.setDRACOLoader(dracoLoader);
+
+			loader.load('models/gltf/ferrari.glb', function (gltf) {
+
+				const carModel = gltf.scene.children[0];
+
+				carModel.getObjectByName('body').material = bodyMaterial;
+
+				carModel.getObjectByName('rim_fl').material = detailsMaterial;
+				carModel.getObjectByName('rim_fr').material = detailsMaterial;
+				carModel.getObjectByName('rim_rr').material = detailsMaterial;
+				carModel.getObjectByName('rim_rl').material = detailsMaterial;
+				carModel.getObjectByName('trim').material = detailsMaterial;
+
+				carModel.getObjectByName('glass').material = glassMaterial;
+
+				wheels.push(
+					carModel.getObjectByName('wheel_fl'),
+					carModel.getObjectByName('wheel_fr'),
+					carModel.getObjectByName('wheel_rl'),
+					carModel.getObjectByName('wheel_rr')
+				);
+
+				// shadow
+				const mesh = new THREE.Mesh(
+					new THREE.PlaneGeometry(0.655 * 4, 1.3 * 4),
+					new THREE.MeshBasicMaterial({
+						map: shadow, blending: THREE.MultiplyBlending, toneMapped: false, transparent: true
+					})
+				);
+				mesh.rotation.x = -Math.PI / 2;
+				mesh.renderOrder = 2;
+				carModel.add(mesh);
+
+				foamEffect = new FoamEffect(carModel);
+				waxEffect = new WaxEffect(carModel, bodyMaterial, detailsMaterial, glassMaterial);
+
+				scene.add(carModel);
+
+			});
+
+			// Foam Effect Button
+			const foamButton = document.getElementById('foam-button');
+			foamButton.addEventListener('click', () => {
+				foamEffect.toggle();
+			});
+
+			// Wax Effect Button
+			const waxButton = document.getElementById('wax-button');
+			waxButton.addEventListener('click', () => {
+				waxEffect.toggle();
+			});
+		}
+
+		class FoamEffect {
+			constructor(carModel) {
+				this.carModel = carModel;
+				this.foamGroup = new THREE.Group(); // Group to hold foam particles
+				this.movementSpeed = 0.01; // Speed of foam movement
+			}
+
+			toggle() {
+				if (!this.foamGroup.children.length) {
+					this.createFoam();
+				} else {
+					this.removeFoam();
+				}
+			}
+
+			createFoam() {
+				const foamMaterial = new THREE.MeshStandardMaterial({
+					color: 0xffffff,
+					roughness: 0.9, // Adjust roughness to make it less shiny
+					opacity: 0.5,
+					transparent: false // Set to false to make foam opaque
+				});
+
+				// Create foam particles and add them to the group
+				const foamGeometry = new THREE.SphereGeometry(0.2, 10, 10); // Adjust size and segments for foam particles
+				const foamCount = 500; // Number of foam particles
+				for (let i = 0; i < foamCount; i++) {
+					const foamParticle = new THREE.Mesh(foamGeometry, foamMaterial);
+					foamParticle.position.set(
+						(Math.random() - 0.5) * 3,
+						Math.random() * 2,
+						(Math.random() - 0.5) * 3
+					); // Spread foam particles around the car
+					this.foamGroup.add(foamParticle);
+				}
+
+				this.carModel.add(this.foamGroup);
+			}
+
+			removeFoam() {
+				this.carModel.remove(this.foamGroup);
+				this.foamGroup = new THREE.Group();
+			}
+
+			animateFoam() {
+				this.foamGroup.children.forEach(particle => {
+					particle.position.y += (Math.random() - 0.5) * this.movementSpeed;
+					particle.position.x += (Math.random() - 0.5) * this.movementSpeed;
+					particle.position.z += (Math.random() - 0.5) * this.movementSpeed;
+
+					// Ensure particles stay within a certain range
+					if (particle.position.y > 2 || particle.position.y < 0) particle.position.y = Math.random() * 2;
+					if (particle.position.x > 3 || particle.position.x < -3) particle.position.x = (Math.random() - 0.5) * 3;
+					if (particle.position.z > 3 || particle.position.z < -3) particle.position.z = (Math.random() - 0.5) * 3;
+				});
+			}
+		}
+
+		class WaxEffect {
+			constructor(carModel, bodyMaterial, detailsMaterial, glassMaterial) {
+				this.carModel = carModel;
+				this.originalMaterials = {};
+				this.shinyMaterials = {};
+				this.isActive = false;
+				this.bodyMaterial = bodyMaterial;
+				this.detailsMaterial = detailsMaterial;
+				this.glassMaterial = glassMaterial;
+			}
+
+			toggle() {
+				if (!this.isActive) {
+					this.apply();
+					this.isActive = true;
+				} else {
+					this.reset();
+					this.isActive = false;
+				}
+			}
+
+			apply() {
+				if (Object.keys(this.originalMaterials).length === 0) {
+					this.storeOriginalMaterials();
+				}
+				this.makeMaterialsShiny();
+				renderer.render(scene, camera); // Renderizar para actualizar los materiales
+			}
+
+			reset() {
+				this.carModel.traverse(child => {
+					if (child instanceof THREE.Mesh && this.originalMaterials[child.uuid]) {
+						child.material = this.originalMaterials[child.uuid]; // Restaurar los materiales originales
+					}
+				});
+				renderer.render(scene, camera); // Renderizar para actualizar los materiales
+			}
+
+			storeOriginalMaterials() {
+				this.carModel.traverse(child => {
+					if (child instanceof THREE.Mesh) {
+						this.originalMaterials[child.uuid] = child.material.clone(); // Almacenar el material original en función de su UUID
+					}
+				});
+			}
+
+			makeMaterialsShiny() {
+				this.carModel.traverse(child => {
+					if (child instanceof THREE.Mesh) {
+						if (!this.shinyMaterials[child.uuid]) {
+							const shinyMaterial = this.originalMaterials[child.uuid].clone();
+							shinyMaterial.clearcoat = 1.0;
+							shinyMaterial.clearcoatRoughness = 0.001;
+							this.shinyMaterials[child.uuid] = shinyMaterial;
+						}
+						child.material = this.shinyMaterials[child.uuid]; // Aplicar el material brillante
+					}
+				});
+			}
+
+			updateShinyMaterial(type, color) {
+				this.carModel.traverse(child => {
+					if (child instanceof THREE.Mesh) {
+						if (type === 'body' && child.name === 'body') {
+							child.material.color.set(color);
+						} else if (type === 'details' && (child.name.startsWith('rim') || child.name === 'trim')) {
+							child.material.color.set(color);
+						} else if (type === 'glass' && child.name === 'glass') {
+							child.material.color.set(color);
+						}
+					}
+				});
+				renderer.render(scene, camera); // Renderizar para actualizar los materiales
+			}
+		}
+
+		function onWindowResize() {
+			camera.aspect = window.innerWidth / window.innerHeight;
+			camera.updateProjectionMatrix();
+			renderer.setSize(window.innerWidth, window.innerHeight);
+		}
+
+		function render() {
+			controls.update();
+
+			const time = -performance.now() / 1000;
+
+			for (let i = 0; i < wheels.length; i++) {
+				wheels[i].rotation.x = time * Math.PI * 2;
+			}
+
+			grid.position.z = -(time) % 1;
+
+			if (foamEffect && foamEffect.foamGroup.children.length) {
+				foamEffect.animateFoam(); // Animar la espuma si está activa
+			}
+
+			renderer.render(scene, camera);
+
+			stats.update();
+		}
+
+		init();
+	</script>
+</body>
+
+</html>

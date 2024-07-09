@@ -1,0 +1,22 @@
+window.botpressWebChat.init({
+    "composerPlaceholder": "Chat with Asistente virtual",
+    "botConversationDescription": "This chatbot was built surprisingly fast with Botpress",
+    "botId": "02df3846-f091-44f1-9f85-7bb801d0ffc3",
+    "hostUrl": "https://cdn.botpress.cloud/webchat/v1",
+    "messagingUrl": "https://messaging.botpress.cloud",
+    "clientId": "02df3846-f091-44f1-9f85-7bb801d0ffc3",
+    "webhookId": "bc22e1ec-54f9-47b6-a731-90133df3e6f6",
+    "lazySocket": true,
+    "themeName": "prism",
+    "botName": "Asistente virtual",
+    "avatarUrl": "https://pbs.twimg.com/profile_images/1791956963070193664/RRqATII7_400x400.jpg",
+    "phoneNumber": "+51 981 090 987",
+    "emailAddress": "contacto@carwash.com",
+    "stylesheet": "https://webchat-styler-css.botpress.app/prod/7d5f069f-2732-46f4-a16f-7babb35ef33c/v10978/style.css",
+    "frontendVersion": "v1",
+    "useSessionStorage": true,
+    "enableConversationDeletion": true,
+    "theme": "prism",
+    "themeColor": "#2563eb",
+    "allowedOrigins": []
+});
